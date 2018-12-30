@@ -15,7 +15,8 @@ int pack_message(const struct tftp_message * const src,
 		 int * const buffersize){
   
   int len_filename, len_mode;
-  char * mode, * c1, * c2;
+  char * mode;
+  uint8_t * c1, * c2;
   uint16_t * const opcode = (uint16_t*)dst;
   
   switch(src->opcode){
@@ -66,8 +67,8 @@ int pack_message(const struct tftp_message * const src,
       return PACK_INSUFFICIENT_BUFFER_SIZE ;
 
     //field DATA
-    c1 = (char*)dst + 4;
-    c2 = (char*)src->block->data;
+    c1 = (uint8_t*)dst + 4;
+    c2 = (uint8_t*)src->block->data;
     for(int i = 0 ; i<src->block->dim; ++i)
       c1[i] = c2[i];
 
@@ -120,8 +121,9 @@ int unpack_message(const void * src,
 		   const int size){
   
   uint16_t * opcode;
-  int len_filename, len_mode;
-  char * c1, * c2, * mode;
+  uint8_t * c1, * c2;
+  int len_filename;
+  char * mode;
   
   opcode = (uint16_t*)src;
 
@@ -132,7 +134,6 @@ int unpack_message(const void * src,
   case OPCODE_WRQ:
     
     len_filename = strlen((char*)src + 2);
-    len_mode = strlen((char*)src + len_filename + 3);
     
     //field filename
     dst->filename = malloc(len_filename + 1);
