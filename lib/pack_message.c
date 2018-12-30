@@ -39,6 +39,8 @@ int pack_message(const struct tftp_message * const src,
       len_mode = 4;
       mode = malloc(5);
       strncpy(mode, MODE_MAIL_STRING, 5);
+	default:
+	  return PACK_INVALID_MODE;
     }
 
     if((4 + len_filename + len_mode) > *buffersize){
@@ -81,7 +83,7 @@ int pack_message(const struct tftp_message * const src,
       *buffersize += src->block->dim;
 
     // field BLOCK #
-    opcode[1] = src->block_number;
+    opcode[1] = htons(src->block_number);
 
     break;
 
@@ -93,7 +95,7 @@ int pack_message(const struct tftp_message * const src,
       return PACK_INSUFFICIENT_BUFFER_SIZE;
 
     // field ERROR CODE
-    opcode[1] = src->error_code;
+    opcode[1] = htons(src->error_code);
 
     strncpy((char*)dst + 4, src->error_message, len_filename + 1);
 
@@ -124,8 +126,8 @@ int unpack_message(const void * src,
   opcode = (uint16_t*)src;
 
   dst->opcode = ntohs(*opcode);
-  
-  switch (*opcode){
+
+  switch (dst->opcode){
   case OPCODE_RRQ:
   case OPCODE_WRQ:
     
@@ -154,8 +156,8 @@ int unpack_message(const void * src,
     // field DATA
     dst->block = malloc(sizeof(struct data_block));
     dst->block->data = malloc(size - 4);
-    c1 = (char*)dst->block->data;
-    c2 = (char*)src + 4;
+    c1 = (uint8_t*)dst->block->data;
+    c2 = (uint8_t*)src + 4;
     for(int i = 0; i < (size-4); ++i)
       c1[i] = c2[i];
     dst->block->dim = size - 4;
@@ -165,19 +167,19 @@ int unpack_message(const void * src,
   case OPCODE_ACK:
     
     // field BLOCK #
-    dst->block_number = *(opcode + 1);
+    dst->block_number = ntohs(*(opcode + 1));
 
     return PACK_SUCCESS;
 
   case OPCODE_ERROR:
     
     // field ERROR CODE
-    dst->error_code = *(opcode + 1);
-    
+    dst->error_code = ntohs(opcode[1]);
+
     // field ERROR MESSAGE
-    len_filename = strlen((char*)dst + 4);
+    len_filename = strlen((char*)&opcode[2]);
     dst->error_message = malloc(len_filename + 1);
-    strncpy(dst->error_message, (char*)dst + 4, len_filename + 4);
+    strncpy(dst->error_message, (char*)&opcode[2], len_filename + 4);
 
     return PACK_SUCCESS;
 

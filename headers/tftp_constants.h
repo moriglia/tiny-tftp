@@ -29,4 +29,14 @@
 #define MODE_OCTET_STRING "OCTET"
 #define MODE_MAIL_STRING "MAIL"
 
+// error codes ---------------------------------------------------------
+#define TFTP_ERROR_GENERIC 0
+#define TFTP_ERROR_FILE_NOT_FOUND 1
+#define TFTP_ERROR_ACCESS_VIOLATION 2
+#define TFTP_ERROR_ALLOCATION_EXCEEDED 3
+#define TFTP_ERROR_ILLEGAL 4
+#define TFTP_ERROR_URECOGNIZED_TRANSFER 5
+#define TFTP_ERROR_FILE_EXISTS 6
+#define TFTP_ERROR_USER_NOT_FOUND 7
+
 #endif
