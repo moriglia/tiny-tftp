@@ -31,6 +31,136 @@ request exchange buffer:
         tftp_request_exchange_buffer.h
 */
 
+void * worker_thread(void* arg){
+  int sock_fd, ret, aux, socklen;
+  struct tftp_message * message_pointer, * reply_pointer;
+  struct sockaddr_in * client_pointer, worker_address, *recv_pointer;
+
+  // reading variables
+  FILE * file_pointer;
+  char buffer[MAX_BUFFER_SIZE];
+  
+
+  // address configuration, binding once for each request to serve
+  worker_address.sin_family = AF_INET;
+  worker_address.sin_addr.s_addr = INADDR_ANY;
+
+  for(;;){
+    //1: withdraw request
+    tftp_request_withdraw(&r, &message_pointer, &client_pointer);
+    
+    //2: choose a random port and bind to socket
+    do {
+      worker_address.sin_port = rand() + 1024;
+
+      // socket creation
+      sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+      if (sock_fd < 0){
+	perror("Socket creation failed in thread. Exiting thread");
+	pthread_exit(255);
+      }
+  
+      ret = bind(sock_fd, (struct sockaddr*)&worker_address,
+		 sizeof(struct sockaddr_in));
+      
+    } while(ret != 0);
+    
+    //3: open file to send
+    switch(message_pointer->mode){
+    case MODE_NETASCII:
+      file_pointer = fopen(message_pointer->filename, "r");
+      break;
+    case MODE_OCTET:
+      file_pointer = fopen(message_pointer->filename, "rb");
+      break;
+    case MODE_MAIL:
+    default:
+      // not supported
+      file_pointer = NULL;
+    }
+
+    // not necessary any more
+    tftp_message_free(message_pointer);
+
+    //4: check for file existence
+    if (!file_pointer){
+      reply_pointer = tftp_message_alloc();
+      if (reply_pointer){
+	reply_pointer->opcode = OPCODE_ERROR;
+	reply_pointer->error_code = TFTP_ERROR_FILE_NOT_FOUND;
+	reply_pointer->error_message = 0;
+	ret = tftp_send(sock_fd, reply_pointer, client_pointer,
+			sizeof(struct sockaddr_in));
+	// do not handle error
+	tftp_message_free(reply_pointer);
+      }
+      free(client_pointer);
+      continue; // without sending error
+    }
+
+
+    // reply structure allocation
+    reply_pointer = tftp_message_alloc();
+    if(!reply_pointer){
+      printf("Allocation of reply packet failed: exiting\n");
+      exit(255);
+    }
+    reply_pointer->block = malloc(sizeof(struct data_block));
+    if(!reply_pointer->block){
+      printf("Allocation of reply packet failed: exiting\n");
+      exit(255);
+    }
+
+    // data packet invariable fields (constants over chunks) 
+    reply_pointer->opcode = OPCODE_DATA;
+    reply_pointer->block->data = buffer;
+    
+    // source address pointer (for acks)
+    socklen = sizeof(struct sockaddr_in));
+    recv_pointer = malloc(socklen);
+    
+    //5: send all chunks
+    aux = 512;
+    for(uint16_t block_number = 1; aux == 512; ++block_number){
+      // get chuck
+      aux = fread(buffer, 1, 512, file_pointer);
+      
+      // prepare data packet (variable fields)
+      reply_pointer->block_number = block_number;
+      reply_pointer->block->dim = aux;
+
+      // send packet
+      ret = tftp_send(sock_fd, reply_pointer, client_address,
+		      sizeof(struct sockaddr_in));
+      
+      // wait for ack
+      message_pointer = tftp_message_alloc();
+      ret = tftp_recv(sock_fd, message_pointer, recv_pointer,
+		      &socklen);
+      while(ret<0 ||
+	    message_pointer->opcode != OPCODE_ACK ||
+	    message_pointer->block_numer != block_number ||
+	    recv_pointer->sin_addr!=client_pointer->sin_addr ||
+	    recv_pointer->sin_port!=client_pointer->sin_port){
+	
+	// not the ack we were waiting for?
+	socklen = sizeof(struct sockaddr_in);//might have been modified
+	tftp_message_free(message_pointer); // it might have been a data packet
+	message_pointer = tftp_message_alloc();
+	ret = tftp_recv(sock_fd, message_pointer, recv_pointer,
+			&socklen);
+	
+      }
+
+      // we received the ack
+      tftp_message_free(message_pointer);
+    }
+
+    //6: close socket
+    close(sock_fd);
+  }
+}
+
 
 int main(int argc, char** argv){
   // variables -----------------------------------------
@@ -45,14 +175,16 @@ int main(int argc, char** argv){
   int port;
   //char * directory;
 
-  pthread_t workers[MAX_REB_SIZE];
+  pthread_t workers[WORKERS_NUMBER];
 
   tftp_message * tftp_msg;
   void buffer[MAX_BUFFER_SIZE];
 
   ssize_t size;
 
-  // init of illegal operation message
+  // random choice settings
+  RAND_MAX = 65535 - 1024;
+  srand(time(NULL));
 
   // ----------------------------------------------------
   if (argc != 3){
@@ -118,18 +250,13 @@ int main(int argc, char** argv){
   client_address = malloc(sizeof(struct sockaddr_in));
   memset(client_address, 0, sizeof(struct sockaddr_in));
   for(;;){
-    // wait for requests
-    size = recvfrom(listener_sd, buffer, MAX_BUFFER_SIZE,
-		    (struct sockaddr *)client_address, sizeof(struct sockaddr_in));
-    if(size == -1){
-      perror("Failed in receiving the UDP packet");
-      // send error ---------- TODO
-      continue ;
-    }
-
-    // unpack request
+    // allocate space for the request data
     tftp_msg = tftp_message_alloc();
-    ret = unpack_request(buffer, tftp_msg, size);
+    
+    // wait for requests
+    ret = tftp_recv(listener_sd, tftp_msg, (struct sockaddr *)client_address,
+		     sizeof(struct sockaddr_in));
+    
     switch(ret){
     case PACK_SUCCESS:
       // nothing to do
@@ -156,22 +283,17 @@ int main(int argc, char** argv){
 	      ILLEGAL_OPERATION_STRING,
 	      ILLEGAL_OPERATION_LEN);
 
-      //pack error message
-      buf_len = MAX_BUFFER_SIZE;
-      ret = pack_message(tftp_msg, buffer, &buf_len);
-
-      // send error message
-      ret = sendto(listener_sd, buffer, buf_len, 0,
-		   (struct sockaddr*)client_address, sizeof(struct sockaddr_in));
-      // no check is fine.
-
+      // send error packet
+      tftp_send(listener_sd, tftp_message, client_address,
+		sizeof(struct sockaddr_in));
+      
       // reset client_address, delete tftp_msg and continue
       memset(client_address, 0, sizeof(struct sockaddr_in));
       tftp_message_free((void*)tftp_message);
       continue ;
     }
 
-    aux = 10;
+    aux = 4;
     for (ret = tftp_reb_deposit(&r, tftp_msg, client_address);
 	 ret != TFTP_REB_DEPOSIT_SUCCESS && aux > 0; --aux){
       ret = tftp_reb_deposit(&r, tftp_msg, client_address);
