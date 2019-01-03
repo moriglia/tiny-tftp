@@ -44,7 +44,7 @@ void tftp_request_withdraw(tftp_reb * reb, struct tftp_message* *message_ref,
 
   // provide the coller with the memory location
   // where the client address has been allocated
-  *client = reb->requests[reb->tail++];
+  *client = reb->clients[reb->tail++];
 
   reb->tail %= reb->size;
 

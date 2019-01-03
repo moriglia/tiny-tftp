@@ -191,6 +191,7 @@ int main(int argc, char** argv){
   struct sockaddr_in listener_address, * client_address;
 
   int port;
+  char presentation_address[16];
 
   pthread_t workers[WORKERS_NUMBER];
 
@@ -272,6 +273,7 @@ int main(int argc, char** argv){
     tftp_msg = tftp_message_alloc();
     
     // wait for requests
+    socklen = sizeof(struct sockaddr_in);
     ret = tftp_recv(listener_sd, tftp_msg, client_address,
 		    (socklen_t *)&socklen);
     
@@ -304,6 +306,7 @@ int main(int argc, char** argv){
       // send error packet
       tftp_send(listener_sd, tftp_msg, client_address,
 		sizeof(struct sockaddr_in));
+      printf("Illegal operation request. Discarded\n");
       
       // reset client_address, delete tftp_msg and continue
       memset(client_address, 0, sizeof(struct sockaddr_in));
@@ -311,6 +314,9 @@ int main(int argc, char** argv){
       continue ;
     }
 
+    inet_ntop(AF_INET, (void*)&client_address->sin_addr, presentation_address, sizeof(struct in_addr));
+    printf("Request from %s:%d for file %s\n",
+	   presentation_address, client_address->sin_port, tftp_msg->filename);
     aux = 4;
     for (ret = tftp_request_deposit(&r, tftp_msg, client_address);
 	 ret != TFTP_REB_DEPOSIT_SUCCESS && aux > 0; --aux){
@@ -322,6 +328,7 @@ int main(int argc, char** argv){
       printf("Dead workers and buffer full\nExiting\n");
       exit(255);
     }
+    printf("Request handed to workers\n");
 
     client_address = malloc(sizeof(struct sockaddr_in));
     
