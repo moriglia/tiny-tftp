@@ -8,3 +8,6 @@ out/
 test/
 testbin/
 bin/
+obj/
+tftp_server
+tftp_client

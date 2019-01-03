@@ -20,9 +20,12 @@
 #define MAX_BUFFER_SIZE 2048
 
 int tftp_send(int sockfd, const struct tftp_message* const message,
-	      struct sockaddr* dest_addr, socklen_t addrlen){
-  void buffer[MAX_BUFFER_SIZE];
-  int buffersize = MAX_BUFFER_SIZE;
+	      struct sockaddr_in* dest_addr, socklen_t addrlen){
+  void * buffer;
+  int ret,
+    buffersize = MAX_BUFFER_SIZE;
+  buffer = malloc(MAX_BUFFER_SIZE);
+  
   
   ret = pack_message(message, buffer, &buffersize);
   if (ret != PACK_SUCCESS){
@@ -30,6 +33,6 @@ int tftp_send(int sockfd, const struct tftp_message* const message,
     return -1;
   }
 
-  return sendto(sockfd, buffer, (size_t)buffersize, 0, dest_addr, addrlen);
+  return sendto(sockfd, buffer, (size_t)buffersize, 0,
+		(struct sockaddr*)dest_addr, addrlen);
 }
-x

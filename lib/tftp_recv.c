@@ -20,15 +20,15 @@
 #define MAX_BUFFER_SIZE 2048
 
 int tftp_recv(int sockfd, struct tftp_message* const message,
-	      struct sockaddr* src_addr, socklen_t *addrlen){
+	      struct sockaddr_in* src_addr, socklen_t *addrlen){
   int ret;
-  void buffer[MAX_BUFFER_SIZE];
+  void *buffer = malloc(MAX_BUFFER_SIZE);
   int buffersize = MAX_BUFFER_SIZE;
 
-  ret = recvfrom(sockfd, buffer, buffersize, 0, src_addr, addrlen);
+  ret = recvfrom(sockfd, buffer, buffersize, 0,
+		 (struct sockaddr*)src_addr, addrlen);
   if(ret<0)
     return ret;
 
   return unpack_message(buffer, message, ret);
 }
-x

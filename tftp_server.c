@@ -3,11 +3,14 @@
 #include "headers/pack_message.h"
 #include "headers/tftp_request_exchange_buffer.h"
 #include "headers/tftp_message_alloc.h"
+#include "headers/tftp_send.h"
+#include "headers/tftp_recv.h"
 
 // network library headers
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 // other utility headers
 #include <errno.h>
@@ -15,6 +18,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <time.h>
 
 #define MAX_BUFFER_SIZE 1024
 #define WORKERS_NUMBER 4
@@ -31,15 +35,30 @@ request exchange buffer:
         tftp_request_exchange_buffer.h
 */
 
+char directory_path[100];
+
 void * worker_thread(void* arg){
-  int sock_fd, ret, aux, socklen;
+  int sock_fd, ret, aux;
+  socklen_t socklen;
   struct tftp_message * message_pointer, * reply_pointer;
   struct sockaddr_in * client_pointer, worker_address, *recv_pointer;
 
   // reading variables
   FILE * file_pointer;
   char buffer[MAX_BUFFER_SIZE];
+
+
+  // file path
+  char file_string[MAX_BUFFER_SIZE];
+  strncpy(file_string, directory_path, strlen(directory_path) + 1);
   
+  // socket creation
+  sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (sock_fd < 0){
+    perror("Socket creation failed in thread. Exiting thread");
+    ret = 255;
+    pthread_exit(&ret);
+  }
 
   // address configuration, binding once for each request to serve
   worker_address.sin_family = AF_INET;
@@ -51,14 +70,7 @@ void * worker_thread(void* arg){
     
     //2: choose a random port and bind to socket
     do {
-      worker_address.sin_port = rand() + 1024;
-
-      // socket creation
-      sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-      if (sock_fd < 0){
-	perror("Socket creation failed in thread. Exiting thread");
-	pthread_exit(255);
-      }
+      worker_address.sin_port = htons( (rand()*64511)/RAND_MAX + 1024 );
   
       ret = bind(sock_fd, (struct sockaddr*)&worker_address,
 		 sizeof(struct sockaddr_in));
@@ -116,7 +128,7 @@ void * worker_thread(void* arg){
     reply_pointer->block->data = buffer;
     
     // source address pointer (for acks)
-    socklen = sizeof(struct sockaddr_in));
+    socklen = sizeof(struct sockaddr_in);
     recv_pointer = malloc(socklen);
     
     //5: send all chunks
@@ -130,25 +142,24 @@ void * worker_thread(void* arg){
       reply_pointer->block->dim = aux;
 
       // send packet
-      ret = tftp_send(sock_fd, reply_pointer, client_address,
+      ret = tftp_send(sock_fd, reply_pointer, client_pointer,
 		      sizeof(struct sockaddr_in));
       
       // wait for ack
       message_pointer = tftp_message_alloc();
       ret = tftp_recv(sock_fd, message_pointer, recv_pointer,
 		      &socklen);
-      while(ret<0 ||
-	    message_pointer->opcode != OPCODE_ACK ||
-	    message_pointer->block_numer != block_number ||
-	    recv_pointer->sin_addr!=client_pointer->sin_addr ||
-	    recv_pointer->sin_port!=client_pointer->sin_port){
+      while((ret<0) ||
+	    (message_pointer->opcode != OPCODE_ACK) ||
+	    (message_pointer->block_number != block_number) ||
+	    (recv_pointer->sin_addr.s_addr != client_pointer->sin_addr.s_addr) ||
+	    (recv_pointer->sin_port != client_pointer->sin_port)){
 	
 	// not the ack we were waiting for?
 	socklen = sizeof(struct sockaddr_in);//might have been modified
-	tftp_message_free(message_pointer); // it might have been a data packet
+	tftp_message_free(message_pointer); // might have been a data packet
 	message_pointer = tftp_message_alloc();
-	ret = tftp_recv(sock_fd, message_pointer, recv_pointer,
-			&socklen);
+	ret = tftp_recv(sock_fd, message_pointer, recv_pointer, &socklen);
 	
       }
 
@@ -156,6 +167,12 @@ void * worker_thread(void* arg){
       tftp_message_free(message_pointer);
     }
 
+    // free reply structure
+    // note: we do not want to deallocate buffer: see tftp_message_free
+    // to understand the reason for the following...
+    reply_pointer->opcode = OPCODE_ERROR; 
+    tftp_message_free(reply_pointer);
+    
     //6: close socket
     close(sock_fd);
   }
@@ -165,31 +182,29 @@ void * worker_thread(void* arg){
 int main(int argc, char** argv){
   // variables -----------------------------------------
   int ret,   // catch return status of functions
-    dir_len, // length of the directory string
-    buf_len,
-    aux;
+    //dir_len, // length of the directory string
+    //buf_len,
+    aux,
+    socklen;
   
   int listener_sd;
   struct sockaddr_in listener_address, * client_address;
 
   int port;
-  //char * directory;
 
   pthread_t workers[WORKERS_NUMBER];
 
-  tftp_message * tftp_msg;
-  void buffer[MAX_BUFFER_SIZE];
+  struct tftp_message * tftp_msg;
 
-  ssize_t size;
+  strncpy(directory_path, argv[2], strlen(argv[2]) + 1);
 
   // random choice settings
-  RAND_MAX = 65535 - 1024;
   srand(time(NULL));
 
   // ----------------------------------------------------
   if (argc != 3){
     printf("Usage: tftp_server <port> <directory>\n");
-    printf("\t<port>\t1 - 65535\n");
+    printf("\t<port>\t\t1 - 65535\n");
     printf("\t<directory>\tDirectory with the files to serve\n");
     exit(255);
   }
@@ -198,11 +213,11 @@ int main(int argc, char** argv){
   if (port > 65535 || port < 1){
     printf("Port out of range: %d\n", port);
     printf("Usage: tftp_server <port> <directory>\n");
-    printf("\t<port>\t1 - 65535\n");
+    printf("\t<port>\t\t1 - 65535\n");
     printf("\t<directory>\tDirectory with the files to serve\n");
     exit(255);
   }
-  dir_len = strlen(argv[2]);
+  //dir_len = strlen(argv[2]);
   
 
   // reb initialization
@@ -227,7 +242,7 @@ int main(int argc, char** argv){
   }
 
   // binding
-  ret = bind(listener_sd, (struct sockaddr*)listener_address,
+  ret = bind(listener_sd, (struct sockaddr*)&listener_address,
 	     sizeof(struct sockaddr));
   if (ret == -1) {
     if(errno == EADDRINUSE){
@@ -241,7 +256,10 @@ int main(int argc, char** argv){
 
   // worker creation
   for(int i = 0; i < WORKERS_NUMBER; ++i){
-    // activate workers TODO
+    do {
+      errno = pthread_create(workers + i, NULL, worker_thread, NULL);
+      perror("Thread creation");
+    }while(errno);
   }
 
 
@@ -254,8 +272,8 @@ int main(int argc, char** argv){
     tftp_msg = tftp_message_alloc();
     
     // wait for requests
-    ret = tftp_recv(listener_sd, tftp_msg, (struct sockaddr *)client_address,
-		     sizeof(struct sockaddr_in));
+    ret = tftp_recv(listener_sd, tftp_msg, client_address,
+		    (socklen_t *)&socklen);
     
     switch(ret){
     case PACK_SUCCESS:
@@ -284,19 +302,19 @@ int main(int argc, char** argv){
 	      ILLEGAL_OPERATION_LEN);
 
       // send error packet
-      tftp_send(listener_sd, tftp_message, client_address,
+      tftp_send(listener_sd, tftp_msg, client_address,
 		sizeof(struct sockaddr_in));
       
       // reset client_address, delete tftp_msg and continue
       memset(client_address, 0, sizeof(struct sockaddr_in));
-      tftp_message_free((void*)tftp_message);
+      tftp_message_free((void*)tftp_msg);
       continue ;
     }
 
     aux = 4;
-    for (ret = tftp_reb_deposit(&r, tftp_msg, client_address);
+    for (ret = tftp_request_deposit(&r, tftp_msg, client_address);
 	 ret != TFTP_REB_DEPOSIT_SUCCESS && aux > 0; --aux){
-      ret = tftp_reb_deposit(&r, tftp_msg, client_address);
+      ret = tftp_request_deposit(&r, tftp_msg, client_address);
       sleep(1);
     }
 

@@ -1,5 +1,5 @@
 #include "../headers/tftp_messages.h"
-#include "../headers/tftp_request_buffer_exchange.h"
+#include "../headers/tftp_request_exchange_buffer.h"
 
 #include <stdlib.h>
 #include <pthread.h>
@@ -68,7 +68,7 @@ int tftp_request_deposit(tftp_reb * reb, struct tftp_message * message_ref,
   if(reb->head == reb->tail)
     pthread_cond_broadcast(&reb->EMPTY);
   
-  reb->head = ++reb->head % reb->size;
+  reb->head = (reb->head + 1) % reb->size;
 
   pthread_mutex_unlock(&reb->M);
 

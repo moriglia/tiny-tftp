@@ -19,7 +19,7 @@ struct tftp_request_exchange_buffer {
   struct sockaddr_in* *clients;
 };
 
-typedef tftp_reb struct tftp_request_exchange_buffer;
+typedef struct tftp_request_exchange_buffer tftp_reb;
 
 int tftp_request_exchange_buffer_init(tftp_reb * reb, int size);
 void tftp_request_withdraw(tftp_reb * reb, struct tftp_message* *message_ref,
@@ -29,6 +29,7 @@ int tftp_request_deposit(tftp_reb * reb, struct tftp_message * message_ref,
 
 #define TFTP_REB_INIT_SUCCESS 0
 #define TFTP_REB_INIT_INVALID_SIZE 1
+#define TFTP_REB_INIT_MEMORY_LACK 2
 
 #define TFTP_REB_DEPOSIT_SUCCESS 0
 #define TFTP_REB_DEPOSIT_FULL 1

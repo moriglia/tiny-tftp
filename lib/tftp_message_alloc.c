@@ -3,9 +3,9 @@
 #include "../headers/tftp_constants.h"
 
 void * tftp_message_alloc(){
-  void * ptr = malloc(sizeof(struct tftp_message));
-  (struct tftp_message *)ptr->opcode = OPCODE_INVALID_LOW;
-  // to prevent accidental "OPCODE_DATA" (would dangerous in ..._free function)
+  struct tftp_message * ptr = malloc(sizeof(struct tftp_message));
+  ptr->opcode = OPCODE_INVALID_LOW;
+  // to prevent accidental "OPCODE_DATA" (would be dangerous in ..._free function)
   return ptr;
 }
 
