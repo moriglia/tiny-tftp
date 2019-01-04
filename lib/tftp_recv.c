@@ -29,6 +29,6 @@ int tftp_recv(int sockfd, struct tftp_message* const message,
 		 (struct sockaddr*)src_addr, addrlen);
   if(ret<0)
     return ret;
-
+  
   return unpack_message(buffer, message, ret);
 }

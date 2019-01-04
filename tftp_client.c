@@ -5,6 +5,7 @@
 #include "headers/tftp_message_alloc.h"
 #include "headers/tftp_send.h"
 #include "headers/tftp_recv.h"
+#include "headers/tftp_display.h"
 
 // network library headers
 #include <arpa/inet.h>
@@ -109,9 +110,12 @@ int prompt(){
 }
 
 void handlerrq(struct tftp_message * tftp_msg){
-  int sockfd, ret, aux;
+  int sockfd, ret, aux, transaction_server_port;
   struct sockaddr_in client_address, incoming_address;
   FILE * fptr;
+#if DEBUG
+  char charbuf[16];
+#endif
       
   // socket creation
   sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -122,13 +126,13 @@ void handlerrq(struct tftp_message * tftp_msg){
   
   // client address configuration
   client_address.sin_family = AF_INET;
-  client_address.sin_addr.s_addr = INADDR_ANY;
+  client_address.sin_addr.s_addr = htonl(INADDR_ANY);
   aux = 50;
   do {
-    client_address.sin_port = htons( rand()*64511/RAND_MAX + 1024 );
+    client_address.sin_port = htons((time(NULL)*rand()*15485863)%64511 + 1024);
     ret = bind(sockfd, (struct sockaddr *)&client_address,
 	       sizeof(struct sockaddr_in));
-  } while(ret != 0 && --aux);
+  } while((ret != 0) && --aux);
   if (ret != 0){
     perror("Multiple binding attempts failed.");
     exit(1);
@@ -147,37 +151,86 @@ void handlerrq(struct tftp_message * tftp_msg){
   }
 
   printf("Sending request for file %s\n", remote_filename);
+#if DEBUG
+  tftp_display(tftp_msg);
+#endif  
   tftp_send(sockfd, tftp_msg, &server_address, sizeof(struct sockaddr_in));
   
-  for(int due = 1; ; ++due){
+  for(int due = 1; ;){
     struct tftp_message * tftp_data;
 
     printf("Waiting for block number:\t%d\n", due);
     tftp_data = tftp_message_alloc();
     aux = sizeof(struct sockaddr_in);
     tftp_recv(sockfd, tftp_data, &incoming_address, (socklen_t *)&aux);
+
+    if(due == 1)
+      transaction_server_port = ntohs(incoming_address.sin_port);
+
+#if DEBUG
+    if(inet_ntop(AF_INET,
+		 (void*)&incoming_address.sin_addr,
+		 charbuf,
+		 sizeof(struct in_addr)))
+      
+      printf("Packet received from %s:%d\n",
+	     charbuf,
+	     ntohs(incoming_address.sin_port));
+    else
+      printf("Packet received from (host IP conversion failed):%d\n",
+	     ntohs(incoming_address.sin_port));
+    printf("Client address is: %d:%d\n", ntohl(incoming_address.sin_addr.s_addr),
+	   ntohs(incoming_address.sin_port));
+    tftp_display(tftp_data);
+#endif
     while( incoming_address.sin_addr.s_addr != server_address.sin_addr.s_addr ||
-	   incoming_address.sin_port != server_address.sin_port ||
-	   tftp_data->opcode != OPCODE_DATA ||
-	   tftp_data->block_number != due){
+	   ntohs(incoming_address.sin_port) != transaction_server_port){
+#if DEBUG
+      printf("Incoming addr:\t%d:%d\n", incoming_address.sin_addr.s_addr,
+	     ntohs(incoming_address.sin_port));
+      printf("Server   addr:\t%d:%d\n", server_address.sin_addr.s_addr,
+	     ntohs(server_address.sin_port));
+#endif
       tftp_message_free(tftp_data);
       tftp_data = tftp_message_alloc();
       aux = sizeof(struct sockaddr_in);
       tftp_recv(sockfd, tftp_data, &incoming_address, (socklen_t *)&aux);
+#if DEBUG
+      printf("Packet received from %s:%d\n",
+	     inet_ntop(AF_INET,
+		       (void*)&incoming_address.sin_addr,
+		       charbuf,
+		       sizeof(struct in_addr)),
+	     incoming_address.sin_port);
+      tftp_display(tftp_data);
+#endif
+    }
+    if(tftp_data->opcode == OPCODE_ERROR &&
+       tftp_data->error_code == TFTP_ERROR_FILE_NOT_FOUND){
+      printf("File %s not found on remote filesystem\n", remote_filename);
+      return;
+    }
+    if(tftp_data->opcode == OPCODE_DATA && tftp_data->block_number == due){
+      printf("Writing block %d of %dB\n", due++, tftp_data->block->dim);
+      fwrite(tftp_data->block->data, 1, tftp_data->block->dim, fptr);
+    } else if (tftp_data->opcode == OPCODE_DATA){
+      tftp_message_free(tftp_data);
+      printf("Unordered incoming packets: unhandled\n");
+      return;
     }
 
-    printf("Writing block %d of %dB\n", due, tftp_data->block->dim);
-    fwrite(tftp_data->block->data, 1, tftp_data->block->dim, fptr);
-
-    printf("Acking block number:\t%d", tftp_data->block_number);
+    printf("Acking block number:\t%d\n", tftp_data->block_number);
     tftp_data->opcode = OPCODE_ACK;
-    tftp_send(sockfd, tftp_data, &server_address, sizeof(struct sockaddr_in));
+    tftp_send(sockfd, tftp_data, &incoming_address, sizeof(struct sockaddr_in));
+#if DEBUG
+    tftp_display(tftp_data);
+#endif
+    tftp_data->opcode = OPCODE_DATA;
+    tftp_message_free(tftp_data);
     
     if (tftp_data->block->dim < 512)
       return;
 
-    tftp_data->opcode = OPCODE_DATA;
-    tftp_message_free(tftp_data);
   }
   
 }

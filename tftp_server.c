@@ -1,3 +1,7 @@
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
 #include "headers/tftp_messages.h"
 #include "headers/tftp_constants.h"
 #include "headers/pack_message.h"
@@ -5,7 +9,9 @@
 #include "headers/tftp_message_alloc.h"
 #include "headers/tftp_send.h"
 #include "headers/tftp_recv.h"
-
+#if DEBUG
+#include "headers/tftp_display.h"
+#endif
 // network library headers
 #include <arpa/inet.h>
 #include <sys/types.h>
@@ -35,13 +41,16 @@ request exchange buffer:
         tftp_request_exchange_buffer.h
 */
 
-char directory_path[100];
+char directory_path[200];
 
 void * worker_thread(void* arg){
   int sock_fd, ret, aux;
   socklen_t socklen;
   struct tftp_message * message_pointer, * reply_pointer;
   struct sockaddr_in * client_pointer, worker_address, *recv_pointer;
+#if DEBUG
+  char addr_string[16];
+#endif
 
   // reading variables
   FILE * file_pointer;
@@ -67,10 +76,16 @@ void * worker_thread(void* arg){
   for(;;){
     //1: withdraw request
     tftp_request_withdraw(&r, &message_pointer, &client_pointer);
+
+    #if DEBUG
+    printf("[Thrd] Withdrawed message:\n");
+    tftp_display(message_pointer);
+    #endif
+
     
     //2: choose a random port and bind to socket
     do {
-      worker_address.sin_port = htons( (rand()*64511)/RAND_MAX + 1024 );
+      worker_address.sin_port = htons((time(NULL)*rand()*15485863)%64511 + 1024);
   
       ret = bind(sock_fd, (struct sockaddr*)&worker_address,
 		 sizeof(struct sockaddr_in));
@@ -78,12 +93,18 @@ void * worker_thread(void* arg){
     } while(ret != 0);
     
     //3: open file to send
+    strncpy(buffer, directory_path, strlen(directory_path) + 1);
+    strncat(buffer, message_pointer->filename,
+	    strlen(message_pointer->filename) + 1);
+#if DEBUG
+    printf("[Worker] sending %s\n", buffer);
+#endif
     switch(message_pointer->mode){
     case MODE_NETASCII:
-      file_pointer = fopen(message_pointer->filename, "r");
+      file_pointer = fopen(buffer, "r");
       break;
     case MODE_OCTET:
-      file_pointer = fopen(message_pointer->filename, "rb");
+      file_pointer = fopen(buffer, "rb");
       break;
     case MODE_MAIL:
     default:
@@ -91,21 +112,33 @@ void * worker_thread(void* arg){
       file_pointer = NULL;
     }
 
-    // not necessary any more
-    tftp_message_free(message_pointer);
-
     //4: check for file existence
     if (!file_pointer){
       reply_pointer = tftp_message_alloc();
+      
       if (reply_pointer){
 	reply_pointer->opcode = OPCODE_ERROR;
 	reply_pointer->error_code = TFTP_ERROR_FILE_NOT_FOUND;
-	reply_pointer->error_message = 0;
+	strncpy(buffer, "File not found: ", strlen("File not, found: ") + 1);
+	strncat(buffer, message_pointer->filename,
+		strlen(message_pointer->filename) + 1);
+	reply_pointer->error_message = buffer;
+#if DEBUG
+	printf("File not found, sending error to client\n");
+	tftp_display(reply_pointer);
+#endif
 	ret = tftp_send(sock_fd, reply_pointer, client_pointer,
 			sizeof(struct sockaddr_in));
+#if DEBUG
+	printf("Error sent\n");
+#endif
 	// do not handle error
+	reply_pointer->opcode = OPCODE_ACK;
 	tftp_message_free(reply_pointer);
       }
+      // not necessary any more
+      tftp_message_free(message_pointer);
+      
       free(client_pointer);
       continue; // without sending error
     }
@@ -135,13 +168,23 @@ void * worker_thread(void* arg){
     aux = 512;
     for(uint16_t block_number = 1; aux == 512; ++block_number){
       // get chuck
-      aux = fread(buffer, 1, 512, file_pointer);
+      aux = fread(reply_pointer->block->data, 1, 512, file_pointer);
       
       // prepare data packet (variable fields)
       reply_pointer->block_number = block_number;
       reply_pointer->block->dim = aux;
 
       // send packet
+#if DEBUG
+      if (inet_ntop(AF_INET, (void*)&client_pointer->sin_addr,
+	  addr_string, MAX_BUFFER_SIZE))
+	printf("[Worker] sending data to client %s:%d\n",
+	       addr_string, ntohs(client_pointer->sin_port));
+      else
+	printf("[Worker] sending data to client (conversion failed):%d\n",
+	       ntohs(client_pointer->sin_port));
+      tftp_display(reply_pointer);
+#endif
       ret = tftp_send(sock_fd, reply_pointer, client_pointer,
 		      sizeof(struct sockaddr_in));
       
@@ -149,6 +192,16 @@ void * worker_thread(void* arg){
       message_pointer = tftp_message_alloc();
       ret = tftp_recv(sock_fd, message_pointer, recv_pointer,
 		      &socklen);
+#if DEBUG
+      if (inet_ntop(AF_INET, (void*)&recv_pointer->sin_addr,
+	  buffer, MAX_BUFFER_SIZE))
+	printf("[Worker] waiting for ack from client %s:%d\n",
+	  buffer, client_pointer->sin_port);
+      else
+	printf("[Worker] waiting for ack from client (conversion failed):%d\n",
+	  client_pointer->sin_port);
+      tftp_display(message_pointer);
+#endif
       while((ret<0) ||
 	    (message_pointer->opcode != OPCODE_ACK) ||
 	    (message_pointer->block_number != block_number) ||
@@ -160,7 +213,16 @@ void * worker_thread(void* arg){
 	tftp_message_free(message_pointer); // might have been a data packet
 	message_pointer = tftp_message_alloc();
 	ret = tftp_recv(sock_fd, message_pointer, recv_pointer, &socklen);
-	
+#if DEBUG
+	if (inet_ntop(AF_INET, (void*)&recv_pointer->sin_addr,
+		      buffer, MAX_BUFFER_SIZE))
+	  printf("[thrd] waiting for ack from client %s:%d\n",
+		 buffer, client_pointer->sin_port);
+	else
+	  printf("[thrd] waiting for ack from client (conversion failed):%d\n",
+		 client_pointer->sin_port);
+	tftp_display(message_pointer);
+#endif
       }
 
       // we received the ack
@@ -191,8 +253,11 @@ int main(int argc, char** argv){
   struct sockaddr_in listener_address, * client_address;
 
   int port;
-  char presentation_address[16];
 
+#if DEBUG
+  char presentation_address[16];
+#endif
+  
   pthread_t workers[WORKERS_NUMBER];
 
   struct tftp_message * tftp_msg;
@@ -276,7 +341,11 @@ int main(int argc, char** argv){
     socklen = sizeof(struct sockaddr_in);
     ret = tftp_recv(listener_sd, tftp_msg, client_address,
 		    (socklen_t *)&socklen);
-    
+    #if DEBUG
+    printf("Receivet TFTP packet:\n");
+    tftp_display(tftp_msg);
+    #endif
+
     switch(ret){
     case PACK_SUCCESS:
       // nothing to do
@@ -304,6 +373,10 @@ int main(int argc, char** argv){
 	      ILLEGAL_OPERATION_LEN);
 
       // send error packet
+      #if DEBUG
+      printf("Sending error packet for illegal operation\n");
+      tftp_display(tftp_msg);
+      #endif 
       tftp_send(listener_sd, tftp_msg, client_address,
 		sizeof(struct sockaddr_in));
       printf("Illegal operation request. Discarded\n");
@@ -314,9 +387,16 @@ int main(int argc, char** argv){
       continue ;
     }
 
-    inet_ntop(AF_INET, (void*)&client_address->sin_addr, presentation_address, sizeof(struct in_addr));
-    printf("Request from %s:%d for file %s\n",
-	   presentation_address, client_address->sin_port, tftp_msg->filename);
+    #if DEBUG
+    if (!inet_ntop(AF_INET, (void*)&client_address->sin_addr, presentation_address, sizeof(struct in_addr)))
+      printf("Address conversion error, s_addr = %d, port= %d\n",
+	     client_address->sin_addr.s_addr,
+	     ntohs(client_address->sin_port));
+    else
+      printf("Request from %s:%d for file %s\n",
+	     presentation_address, ntohs(client_address->sin_port),
+	     tftp_msg->filename);
+    #endif
     aux = 4;
     for (ret = tftp_request_deposit(&r, tftp_msg, client_address);
 	 ret != TFTP_REB_DEPOSIT_SUCCESS && aux > 0; --aux){
@@ -324,8 +404,13 @@ int main(int argc, char** argv){
       sleep(1);
     }
 
+    #if DEBUG
+    printf("[main] Deposited:\n");
+    tftp_display(tftp_msg);
+    #endif
+
     if(ret != TFTP_REB_DEPOSIT_SUCCESS){
-      printf("Dead workers and buffer full\nExiting\n");
+      printf("Dead workers or buffer full\nExiting\n");
       exit(255);
     }
     printf("Request handed to workers\n");
