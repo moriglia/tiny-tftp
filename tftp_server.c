@@ -9,9 +9,12 @@
 #include "headers/tftp_message_alloc.h"
 #include "headers/tftp_send.h"
 #include "headers/tftp_recv.h"
+#include "headers/safeprintf.h"
 #if DEBUG
 #include "headers/tftp_display.h"
+#include "headers/safe_tftp_display.h"
 #endif
+
 // network library headers
 #include <arpa/inet.h>
 #include <sys/types.h>
@@ -43,7 +46,13 @@ request exchange buffer:
 
 char directory_path[200];
 
+// mutex for printing data
+pthread_mutex_t M_perror;
+pthread_mutex_t M_printf;
+
 void * worker_thread(void* arg){
+  int worker_index;
+  char error_string[100];
   int sock_fd, ret, aux;
   socklen_t socklen;
   struct tftp_message * message_pointer, * reply_pointer;
@@ -60,16 +69,11 @@ void * worker_thread(void* arg){
   // file path
   char file_string[MAX_BUFFER_SIZE];
   strncpy(file_string, directory_path, strlen(directory_path) + 1);
-  
-  // socket creation
-  sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (sock_fd < 0){
-    perror("Socket creation failed in thread. Exiting thread");
-    ret = 255;
-    pthread_exit(&ret);
-  }
 
-  // address configuration, binding once for each request to serve
+  // get worker index
+  worker_index = *(int*)arg;
+
+  // address configuration, setting once for each request to serve
   worker_address.sin_family = AF_INET;
   worker_address.sin_addr.s_addr = INADDR_ANY;
 
@@ -78,12 +82,25 @@ void * worker_thread(void* arg){
     tftp_request_withdraw(&r, &message_pointer, &client_pointer);
 
     #if DEBUG
-    printf("[Thrd] Withdrawed message:\n");
-    tftp_display(message_pointer);
+    safe_printf(&M_printf,"[Thrd] Withdrawed message:\n");
+    safe_tftp_display(&M_printf,message_pointer);
     #endif
 
     
     //2: choose a random port and bind to socket
+    //2.1: socket creation
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0){
+      sprintf(error_string, "[Worker %d] Socket creation failed. Exiting thread.",
+	      worker_index);
+      safe_perror(&M_perror,error_string);
+      aux = 255;
+      pthread_exit(&aux);
+    } else {
+      safe_printf(&M_printf,"[Worker %d] Socket creation successful\n",
+	     worker_index);
+    }
+    //2.2: binding
     do {
       worker_address.sin_port = htons((time(NULL)*rand()*15485863)%64511 + 1024);
   
@@ -97,7 +114,7 @@ void * worker_thread(void* arg){
     strncat(buffer, message_pointer->filename,
 	    strlen(message_pointer->filename) + 1);
 #if DEBUG
-    printf("[Worker] sending %s\n", buffer);
+    safe_printf(&M_printf,"[Worker] sending %s\n", buffer);
 #endif
     switch(message_pointer->mode){
     case MODE_NETASCII:
@@ -124,13 +141,13 @@ void * worker_thread(void* arg){
 		strlen(message_pointer->filename) + 1);
 	reply_pointer->error_message = buffer;
 #if DEBUG
-	printf("File not found, sending error to client\n");
-	tftp_display(reply_pointer);
+	safe_printf(&M_printf,"File not found, sending error to client\n");
+	safe_tftp_display(&M_printf,reply_pointer);
 #endif
 	ret = tftp_send(sock_fd, reply_pointer, client_pointer,
 			sizeof(struct sockaddr_in));
 #if DEBUG
-	printf("Error sent\n");
+	safe_printf(&M_printf,"Error sent\n");
 #endif
 	// do not handle error
 	reply_pointer->opcode = OPCODE_ACK;
@@ -147,12 +164,12 @@ void * worker_thread(void* arg){
     // reply structure allocation
     reply_pointer = tftp_message_alloc();
     if(!reply_pointer){
-      printf("Allocation of reply packet failed: exiting\n");
+      safe_printf(&M_printf,"Allocation of reply packet failed: exiting\n");
       exit(255);
     }
     reply_pointer->block = malloc(sizeof(struct data_block));
     if(!reply_pointer->block){
-      printf("Allocation of reply packet failed: exiting\n");
+      safe_printf(&M_printf,"Allocation of reply packet failed: exiting\n");
       exit(255);
     }
 
@@ -178,12 +195,12 @@ void * worker_thread(void* arg){
 #if DEBUG
       if (inet_ntop(AF_INET, (void*)&client_pointer->sin_addr,
 	  addr_string, MAX_BUFFER_SIZE))
-	printf("[Worker] sending data to client %s:%d\n",
+	safe_printf(&M_printf,"[Worker] sending data to client %s:%d\n",
 	       addr_string, ntohs(client_pointer->sin_port));
       else
-	printf("[Worker] sending data to client (conversion failed):%d\n",
+	safe_printf(&M_printf,"[Worker] sending data to client (conversion failed):%d\n",
 	       ntohs(client_pointer->sin_port));
-      tftp_display(reply_pointer);
+      safe_tftp_display(&M_printf,reply_pointer);
 #endif
       ret = tftp_send(sock_fd, reply_pointer, client_pointer,
 		      sizeof(struct sockaddr_in));
@@ -195,12 +212,12 @@ void * worker_thread(void* arg){
 #if DEBUG
       if (inet_ntop(AF_INET, (void*)&recv_pointer->sin_addr,
 	  buffer, MAX_BUFFER_SIZE))
-	printf("[Worker] waiting for ack from client %s:%d\n",
+	safe_printf(&M_printf,"[Worker] waiting for ack from client %s:%d\n",
 	  buffer, client_pointer->sin_port);
       else
-	printf("[Worker] waiting for ack from client (conversion failed):%d\n",
+	safe_printf(&M_printf,"[Worker] waiting for ack from client (conversion failed):%d\n",
 	  client_pointer->sin_port);
-      tftp_display(message_pointer);
+      safe_tftp_display(&M_printf,message_pointer);
 #endif
       while((ret<0) ||
 	    (message_pointer->opcode != OPCODE_ACK) ||
@@ -216,12 +233,12 @@ void * worker_thread(void* arg){
 #if DEBUG
 	if (inet_ntop(AF_INET, (void*)&recv_pointer->sin_addr,
 		      buffer, MAX_BUFFER_SIZE))
-	  printf("[thrd] waiting for ack from client %s:%d\n",
+	  safe_printf(&M_printf,"[thrd] waiting for ack from client %s:%d\n",
 		 buffer, client_pointer->sin_port);
 	else
-	  printf("[thrd] waiting for ack from client (conversion failed):%d\n",
+	  safe_printf(&M_printf,"[thrd] waiting for ack from client (conversion failed):%d\n",
 		 client_pointer->sin_port);
-	tftp_display(message_pointer);
+	safe_tftp_display(&M_printf,message_pointer);
 #endif
       }
 
@@ -259,11 +276,14 @@ int main(int argc, char** argv){
 #endif
   
   pthread_t workers[WORKERS_NUMBER];
+  int args[WORKERS_NUMBER];
 
   struct tftp_message * tftp_msg;
 
-  strncpy(directory_path, argv[2], strlen(argv[2]) + 1);
-
+  // mutex initialization
+  pthread_mutex_init(&M_perror, NULL);
+  pthread_mutex_init(&M_printf, NULL);
+  
   // random choice settings
   srand(time(NULL));
 
@@ -275,6 +295,14 @@ int main(int argc, char** argv){
     exit(255);
   }
 
+  // add trailing "/"
+  strncpy(directory_path, argv[2], strlen(argv[2]) + 1);
+  if(directory_path[strlen(directory_path) - 1] != '/'){
+    directory_path[strlen(directory_path) + 1] = 0;
+    directory_path[strlen(directory_path)] = '/';
+  }
+
+  // get port
   port = atoi(argv[1]);
   if (port > 65535 || port < 1){
     printf("Port out of range: %d\n", port);
@@ -283,7 +311,6 @@ int main(int argc, char** argv){
     printf("\t<directory>\tDirectory with the files to serve\n");
     exit(255);
   }
-  //dir_len = strlen(argv[2]);
   
 
   // reb initialization
@@ -305,7 +332,7 @@ int main(int argc, char** argv){
   if (listener_sd == -1){
     perror("Socket creation failed");
     exit(errno);
-  }
+  } else printf("Listening socket successfully created\n");
 
   // binding
   ret = bind(listener_sd, (struct sockaddr*)&listener_address,
@@ -317,14 +344,16 @@ int main(int argc, char** argv){
       exit(errno);
     }
     perror("Binding error, see details");
+    close(listener_sd);
     exit(errno);
   }
 
   // worker creation
   for(int i = 0; i < WORKERS_NUMBER; ++i){
     do {
-      errno = pthread_create(workers + i, NULL, worker_thread, NULL);
-      perror("Thread creation");
+      args[i] = i+1;
+      errno = pthread_create(workers + i, NULL, worker_thread, (void*)(args + i));
+      safe_perror(&M_perror,"Thread creation");
     }while(errno);
   }
 
@@ -341,13 +370,14 @@ int main(int argc, char** argv){
     socklen = sizeof(struct sockaddr_in);
     ret = tftp_recv(listener_sd, tftp_msg, client_address,
 		    (socklen_t *)&socklen);
-    #if DEBUG
-    printf("Receivet TFTP packet:\n");
-    tftp_display(tftp_msg);
-    #endif
 
+    //printf();
     switch(ret){
     case PACK_SUCCESS:
+#if DEBUG
+      safe_printf(&M_printf,"Received TFTP packet:\n");
+      safe_tftp_display(&M_printf,tftp_msg);
+#endif
       // nothing to do
       break;
       
@@ -374,12 +404,12 @@ int main(int argc, char** argv){
 
       // send error packet
       #if DEBUG
-      printf("Sending error packet for illegal operation\n");
-      tftp_display(tftp_msg);
+      safe_printf(&M_printf,"Sending error packet for illegal operation\n");
+      safe_tftp_display(&M_printf,tftp_msg);
       #endif 
       tftp_send(listener_sd, tftp_msg, client_address,
 		sizeof(struct sockaddr_in));
-      printf("Illegal operation request. Discarded\n");
+      safe_printf(&M_printf,"Illegal operation request. Discarded\n");
       
       // reset client_address, delete tftp_msg and continue
       memset(client_address, 0, sizeof(struct sockaddr_in));
@@ -389,11 +419,11 @@ int main(int argc, char** argv){
 
     #if DEBUG
     if (!inet_ntop(AF_INET, (void*)&client_address->sin_addr, presentation_address, sizeof(struct in_addr)))
-      printf("Address conversion error, s_addr = %d, port= %d\n",
+      safe_printf(&M_printf,"Address conversion error, s_addr = %d, port= %d\n",
 	     client_address->sin_addr.s_addr,
 	     ntohs(client_address->sin_port));
     else
-      printf("Request from %s:%d for file %s\n",
+      safe_printf(&M_printf,"Request from %s:%d for file %s\n",
 	     presentation_address, ntohs(client_address->sin_port),
 	     tftp_msg->filename);
     #endif
@@ -405,15 +435,15 @@ int main(int argc, char** argv){
     }
 
     #if DEBUG
-    printf("[main] Deposited:\n");
-    tftp_display(tftp_msg);
+    safe_printf(&M_printf,"[main] Deposited:\n");
+    safe_tftp_display(&M_printf,tftp_msg);
     #endif
 
     if(ret != TFTP_REB_DEPOSIT_SUCCESS){
-      printf("Dead workers or buffer full\nExiting\n");
+      safe_printf(&M_printf,"Dead workers or buffer full\nExiting\n");
       exit(255);
     }
-    printf("Request handed to workers\n");
+    safe_printf(&M_printf,"Request handed to workers\n");
 
     client_address = malloc(sizeof(struct sockaddr_in));
     

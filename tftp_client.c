@@ -132,9 +132,12 @@ void handlerrq(struct tftp_message * tftp_msg){
     client_address.sin_port = htons((time(NULL)*rand()*15485863)%64511 + 1024);
     ret = bind(sockfd, (struct sockaddr *)&client_address,
 	       sizeof(struct sockaddr_in));
-  } while((ret != 0) && --aux);
+    if (ret!=0)
+      printf("Binding error (porta %d), tentativi rimasti: %d\n",
+	     ntohs(client_address.sin_port), --aux);
+  } while((ret != 0) && aux);
   if (ret != 0){
-    perror("Multiple binding attempts failed.");
+    perror("Tentativi esauriti per il binding");
     exit(1);
   }
 
@@ -146,11 +149,11 @@ void handlerrq(struct tftp_message * tftp_msg){
     fptr = fopen(local_filename, "wb");
 
   if (!fptr){
-    printf("Error accessing the filesystem\nExiting\n");
+    printf("Errore di accesso al filesystem\nExiting\n");
     exit(1);
   }
 
-  printf("Sending request for file %s\n", remote_filename);
+  printf("Richiesto file %s\n", remote_filename);
 #if DEBUG
   tftp_display(tftp_msg);
 #endif  
@@ -179,7 +182,7 @@ void handlerrq(struct tftp_message * tftp_msg){
     else
       printf("Packet received from (host IP conversion failed):%d\n",
 	     ntohs(incoming_address.sin_port));
-    printf("Client address is: %d:%d\n", ntohl(incoming_address.sin_addr.s_addr),
+    printf("Server address is: %d:%d\n", ntohl(incoming_address.sin_addr.s_addr),
 	   ntohs(incoming_address.sin_port));
     tftp_display(tftp_data);
 #endif
@@ -218,8 +221,9 @@ void handlerrq(struct tftp_message * tftp_msg){
       printf("Unordered incoming packets: unhandled\n");
       return;
     }
-
+#if DEBUG
     printf("Acking block number:\t%d\n", tftp_data->block_number);
+#endif
     tftp_data->opcode = OPCODE_ACK;
     tftp_send(sockfd, tftp_data, &incoming_address, sizeof(struct sockaddr_in));
 #if DEBUG
@@ -241,7 +245,7 @@ int main(int argc, char** argv){
 
   struct tftp_message tftp_msg;
 
-  mode = MODE_TXT;
+  mode = MODE_BIN; // default mode
   
   if (argc < 3){
     print_usage();
@@ -250,7 +254,7 @@ int main(int argc, char** argv){
 
   // server address configuration
   ret = atoi(argv[2]);
-  if (ret <1 || ret >65535 ){
+  if (ret <1 || ret > 65535 ){
     printf("Port out of range [1-65535]: %d\n", ret);
     print_usage();
     exit(1);
@@ -271,6 +275,7 @@ int main(int argc, char** argv){
 
     switch(ret){
     case COMMAND_UNKNOWN:
+      printf("Comando sconosciuto\n");
     case COMMAND_HELP:
       print_help_message();
       continue;
