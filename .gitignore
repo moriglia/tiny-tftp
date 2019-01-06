@@ -14,4 +14,5 @@ tftp_client
 *.bin
 *.txt
 *.in
+*.copy*
 serving_folder/**/*
