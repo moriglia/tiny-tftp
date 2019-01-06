@@ -57,7 +57,8 @@ void * worker_thread(void* arg){
   struct tftp_message * message_pointer, * reply_pointer;
   struct sockaddr_in * client_pointer, worker_address, *recv_pointer;
   char addr_string[INET_ADDRSTRLEN];
-
+  uint16_t block_number;
+  
   // reading variables
   FILE * file_pointer;
   char buffer[MAX_BUFFER_SIZE];
@@ -196,7 +197,7 @@ void * worker_thread(void* arg){
     
     //5: send all chunks
     aux = 512;
-    for(uint16_t block_number = 1; aux == 512; ++block_number){
+    for(block_number = 1; aux == 512; ++block_number){
       // get chuck
       aux = fread(reply_pointer->block->data, 1, 512, file_pointer);
       
@@ -378,11 +379,12 @@ int main(int argc, char** argv){
   }
 
   // worker creation
-  for(int i = 0; i < WORKERS_NUMBER; ++i){
+  for(ret = 0; ret < WORKERS_NUMBER; ++ret){
     do {
-      args[i] = i+1;
-      errno = pthread_create(workers + i, NULL, worker_thread, (void*)(args + i));
-      safe_perror(&M_perror,"[MAIN] Thread %d creation", i + 1);
+      args[ret] = ret+1;
+      errno = pthread_create(workers + ret, NULL,
+			     worker_thread, (void*)(args + ret));
+      safe_perror(&M_perror,"[MAIN] Thread %d creation", ret + 1);
     }while(errno);
   }
 

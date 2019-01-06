@@ -14,7 +14,7 @@ int pack_message(const struct tftp_message * const src,
 		 void * const dst,
 		 int * const buffersize){
   
-  int len_filename, len_mode;
+  int len_filename, len_mode, i;
   char * mode;
   uint8_t * c1, * c2;
   uint16_t * const opcode = (uint16_t*)dst;
@@ -69,7 +69,7 @@ int pack_message(const struct tftp_message * const src,
     //field DATA
     c1 = (uint8_t*)dst + 4;
     c2 = (uint8_t*)src->block->data;
-    for(int i = 0 ; i<src->block->dim; ++i)
+    for(i = 0 ; i<src->block->dim; ++i)
       c1[i] = c2[i];
 
     // continue to OPCODE_ACK operations
@@ -122,7 +122,7 @@ int unpack_message(const void * src,
   
   uint16_t * opcode;
   uint8_t * c1, * c2;
-  int len_filename;
+  int len_filename, i;
   char * mode;
   
   opcode = (uint16_t*)src;
@@ -159,7 +159,7 @@ int unpack_message(const void * src,
     dst->block->data = malloc(size - 4);
     c1 = (uint8_t*)dst->block->data;
     c2 = (uint8_t*)src + 4;
-    for(int i = 0; i < (size-4); ++i)
+    for(i = 0; i < (size-4); ++i)
       c1[i] = c2[i];
     dst->block->dim = size - 4;
 

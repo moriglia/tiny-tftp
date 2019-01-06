@@ -110,7 +110,7 @@ int prompt(){
 }
 
 void handlerrq(struct tftp_message * tftp_msg){
-  int sockfd, ret, aux, transaction_server_port;
+  int sockfd, ret, aux, transaction_server_port, due;
   struct sockaddr_in client_address, incoming_address;
   FILE * fptr;
 #if DEBUG
@@ -161,7 +161,7 @@ void handlerrq(struct tftp_message * tftp_msg){
 #endif  
   tftp_send(sockfd, tftp_msg, &server_address, sizeof(struct sockaddr_in));
   
-  for(int due = 1; ;){
+  for(due = 1; ;){
     struct tftp_message * tftp_data;
 
     printf("Waiting for block number:\t%d\n", due);
