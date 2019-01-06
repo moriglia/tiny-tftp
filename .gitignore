@@ -11,3 +11,7 @@ bin/
 obj/
 tftp_server
 tftp_client
+*.bin
+*.txt
+*.in
+serving_folder/**/*

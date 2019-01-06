@@ -120,32 +120,32 @@ void * worker_thread(void* arg){
 		addr_string, ntohs(client_pointer->sin_port));
     
     switch(message_pointer->mode){
-  case MODE_NETASCII:
-    file_pointer = fopen(buffer, "r");
-    break;
-  case MODE_OCTET:
-    file_pointer = fopen(buffer, "rb");
-    break;
-  case MODE_MAIL:
-  default:
-    // not supported
-    file_pointer = NULL;
-  }
+    case MODE_NETASCII:
+      file_pointer = fopen(buffer, "r");
+      break;
+    case MODE_OCTET:
+      file_pointer = fopen(buffer, "rb");
+      break;
+    case MODE_MAIL:
+    default:
+      // not supported
+      file_pointer = NULL;
+    }
 
     //4: check for file existence
     if (!file_pointer){
-    reply_pointer = tftp_message_alloc();
+      reply_pointer = tftp_message_alloc();
     
-    if (reply_pointer){
-    reply_pointer->opcode = OPCODE_ERROR;
-    reply_pointer->error_code = TFTP_ERROR_FILE_NOT_FOUND;
-    strncpy(buffer, "File not found: ", strlen("File not, found: ") + 1);
-    strncat(buffer, message_pointer->filename,
-      strlen(message_pointer->filename) + 1);
-    reply_pointer->error_message = buffer;
-    safe_printf(&M_printf,
-      "[Worker %d] %s, sending error to client %s:%d\n",
-      worker_index, buffer, addr_string, ntohs(client_pointer->sin_port));
+      if (reply_pointer){
+	reply_pointer->opcode = OPCODE_ERROR;
+	reply_pointer->error_code = TFTP_ERROR_FILE_NOT_FOUND;
+	strncpy(buffer, "File not found: ", strlen("File not, found: ") + 1);
+	strncat(buffer, message_pointer->filename,
+		strlen(message_pointer->filename) + 1);
+	reply_pointer->error_message = buffer;
+	safe_printf(&M_printf,
+		    "[Worker %d] %s, sending error to client %s:%d\n",
+		    worker_index, buffer, addr_string, ntohs(client_pointer->sin_port));
 #if DEBUG
 	safe_tftp_display(&M_printf,reply_pointer);
 #endif
@@ -169,6 +169,7 @@ void * worker_thread(void* arg){
     // reply structure allocation
     reply_pointer = tftp_message_alloc();
     if(!reply_pointer){
+      fclose(file_pointer);
       safe_perror(&M_printf,
 		  "[Worker %d] Allocation of reply packet failed: exiting",
 		  worker_index);
@@ -177,6 +178,7 @@ void * worker_thread(void* arg){
     }
     reply_pointer->block = malloc(sizeof(struct data_block));
     if(!reply_pointer->block){
+      fclose(file_pointer);
       safe_perror(&M_printf,
 		  "[Worker %d] Allocation of reply packet failed: exiting",
 		  worker_index);
@@ -205,7 +207,7 @@ void * worker_thread(void* arg){
       // send packet
 #if DEBUG
       if (inet_ntop(AF_INET, (void*)&client_pointer->sin_addr,
-	  addr_string, MAX_BUFFER_SIZE))
+		    addr_string, MAX_BUFFER_SIZE))
 	safe_printf(&M_printf,"[Worker %d] sending data to client %s:%d\n",
 		    worker_index, addr_string, ntohs(client_pointer->sin_port));
       else
@@ -225,7 +227,7 @@ void * worker_thread(void* arg){
 		      &socklen);
 #if DEBUG
       if (inet_ntop(AF_INET, (void*)&recv_pointer->sin_addr,
-	  buffer, MAX_BUFFER_SIZE))
+		    buffer, MAX_BUFFER_SIZE))
 	safe_printf(&M_printf,
 		    "[Worker %d] waiting for ack from client %s:%d\n",
 		    worker_index, buffer, ntohs(client_pointer->sin_port));
@@ -280,6 +282,7 @@ void * worker_thread(void* arg){
     
     //6: close socket
     close(sock_fd);
+    fclose(file_pointer);
   }
 }
 

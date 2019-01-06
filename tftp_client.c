@@ -138,6 +138,7 @@ void handlerrq(struct tftp_message * tftp_msg){
   } while((ret != 0) && aux);
   if (ret != 0){
     perror("Tentativi esauriti per il binding");
+    close(sockfd);
     exit(1);
   }
 
@@ -150,6 +151,7 @@ void handlerrq(struct tftp_message * tftp_msg){
 
   if (!fptr){
     printf("Errore di accesso al filesystem\nExiting\n");
+    close(sockfd);
     exit(1);
   }
 
@@ -211,6 +213,8 @@ void handlerrq(struct tftp_message * tftp_msg){
     if(tftp_data->opcode == OPCODE_ERROR &&
        tftp_data->error_code == TFTP_ERROR_FILE_NOT_FOUND){
       printf("File %s not found on remote filesystem\n", remote_filename);
+      fclose(fptr);
+      close(sockfd);
       return;
     }
     if(tftp_data->opcode == OPCODE_DATA && tftp_data->block_number == due){
@@ -219,6 +223,8 @@ void handlerrq(struct tftp_message * tftp_msg){
     } else if (tftp_data->opcode == OPCODE_DATA){
       tftp_message_free(tftp_data);
       printf("Unordered incoming packets: unhandled\n");
+      fclose(fptr);
+      close(sockfd);
       return;
     }
 #if DEBUG
@@ -232,8 +238,11 @@ void handlerrq(struct tftp_message * tftp_msg){
     tftp_data->opcode = OPCODE_DATA;
     tftp_message_free(tftp_data);
     
-    if (tftp_data->block->dim < 512)
+    if (tftp_data->block->dim < 512){
+      fclose(fptr);
+      close(sockfd);
       return;
+    }
 
   }
   
