@@ -15,6 +15,8 @@ endif
 
 $(info FLAGS set to: $(FLAGS))
 
+all: tftp_server tftp_client
+
 help:
 	@echo ""
 	@echo "Usage: make [flag settings] <--> [target]"
@@ -28,8 +30,6 @@ help:
 	@echo "tftp_client:	TFTP client"
 	@echo "clean:		remove objects and executables"
 
-
-all: tftp_server tftp_client
 
 
 #%_test: test/%_test.c
